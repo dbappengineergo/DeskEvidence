@@ -1,0 +1,32 @@
+# Ambientes Virtuais
+.venv/
+venv/
+ENV/
+env/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Executáveis e builds
+build/
+dist/
+*.spec
+*.exe
+
+# Pastas de dados de teste de evidências locais
+Evidencias/
+evidence_output/
+tests/output/
+
+# VS Code e IDEs
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
