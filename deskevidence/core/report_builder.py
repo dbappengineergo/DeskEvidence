@@ -321,6 +321,10 @@ def generate_html_report(ticket_data: Dict[str, Any], output_path: Path, embed_i
         {cards_rendered}
 
         {conclusion_html}
+
+        <footer class="footer">
+            {f'<div class="footer-address">{html.escape(company_address).replace(chr(10), "<br>")}</div>' if company_address else ''}
+        </footer>
     """
 
     html_content = f"""<!DOCTYPE html>
