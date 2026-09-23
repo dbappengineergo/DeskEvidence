@@ -13,7 +13,6 @@ __pycache__/
 
 # Executáveis e builds
 build/
-dist/
 *.spec
 *.exe
 
