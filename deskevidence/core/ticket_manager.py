@@ -177,14 +177,266 @@ class TicketManager:
 
         return evidence_record
 
-    def update_ticket_conclusion(self, ticket_id: str, conclusion: str) -> bool:
+    def _resolve_ticket(self, ticket_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Retorna o objeto de dados do chamado correspondente (ativo ou buscado por ID)."""
+        if not ticket_id:
+            return self._active_ticket
+        if self._active_ticket and self._active_ticket.get("id") == ticket_id:
+            return self._active_ticket
+        return self.get_ticket_by_id(ticket_id)
+
+    def update_ticket_description(self, ticket_id: Optional[str], description: str) -> bool:
+        """Atualiza a descrição do chamado e salva no JSON."""
+        ticket = self._resolve_ticket(ticket_id)
+        if not ticket:
+            return False
+        ticket["description"] = description.strip()
+        self._save_ticket_json(ticket)
+        if self._active_ticket and self._active_ticket.get("id") == ticket.get("id"):
+            self._active_ticket["description"] = description.strip()
+        return True
+
+    def update_ticket_details(
+        self,
+        ticket_id: Optional[str] = None,
+        description: Optional[str] = None,
+        name: Optional[str] = None,
+        number: Optional[str] = None
+    ) -> bool:
+        """Atualiza campos descritivos e cadastrais do chamado."""
+        ticket = self._resolve_ticket(ticket_id)
+        if not ticket:
+            return False
+        if description is not None:
+            ticket["description"] = description.strip()
+        if name is not None:
+            ticket["name"] = name.strip()
+        if number is not None:
+            ticket["number"] = number.strip()
+        self._save_ticket_json(ticket)
+        if self._active_ticket and self._active_ticket.get("id") == ticket.get("id"):
+            if description is not None:
+                self._active_ticket["description"] = description.strip()
+            if name is not None:
+                self._active_ticket["name"] = name.strip()
+            if number is not None:
+                self._active_ticket["number"] = number.strip()
+        return True
+
+    def update_evidence_description(self, ticket_id: Optional[str], evidence_index: int, description: str) -> bool:
+        """Atualiza a descrição de uma evidência específica pelo índice sequencial."""
+        ticket = self._resolve_ticket(ticket_id)
+        if not ticket:
+            return False
+        evidences = ticket.get("evidences", [])
+        updated = False
+        for ev in evidences:
+            if ev.get("index") == evidence_index:
+                ev["description"] = description.strip()
+                updated = True
+                break
+        if updated:
+            self._save_ticket_json(ticket)
+            if self._active_ticket and self._active_ticket.get("id") == ticket.get("id"):
+                self._active_ticket["evidences"] = evidences
+        return updated
+
+    def delete_evidence(self, ticket_id: Optional[str], evidence_index: int, remove_file: bool = True) -> bool:
+        """Exclui uma evidência pelo índice, apaga o arquivo físico e reordena os índices restantes."""
+        ticket = self._resolve_ticket(ticket_id)
+        if not ticket:
+            return False
+        evidences = ticket.get("evidences", [])
+        target_idx = -1
+        target_ev = None
+        for i, ev in enumerate(evidences):
+            if ev.get("index") == evidence_index:
+                target_idx = i
+                target_ev = ev
+                break
+        if target_idx == -1:
+            return False
+
+        if remove_file and target_ev:
+            folder = Path(ticket.get("folder_path", ""))
+            rel_path = target_ev.get("relative_path", "")
+            if folder.exists() and rel_path:
+                img_path = folder / rel_path
+                if img_path.exists():
+                    try:
+                        img_path.unlink()
+                    except Exception as e:
+                        print(f"[TicketManager] Falha ao deletar arquivo de imagem {img_path}: {e}")
+
+        evidences.pop(target_idx)
+        # Re-indexa todas as evidências sequencialmente de 1 a N
+        for new_idx, ev in enumerate(evidences, 1):
+            ev["index"] = new_idx
+
+        ticket["evidences"] = evidences
+        self._save_ticket_json(ticket)
+        if self._active_ticket and self._active_ticket.get("id") == ticket.get("id"):
+            self._active_ticket["evidences"] = evidences
+        return True
+
+    def move_evidence_up(self, ticket_id: Optional[str], evidence_index: int) -> bool:
+        """Move a evidência para cima na ordem do relatório e re-indexa a lista."""
+        ticket = self._resolve_ticket(ticket_id)
+        if not ticket:
+            return False
+        evidences = ticket.get("evidences", [])
+        idx_pos = -1
+        for i, ev in enumerate(evidences):
+            if ev.get("index") == evidence_index:
+                idx_pos = i
+                break
+        if idx_pos <= 0:
+            return False  # Já está no topo ou não encontrado
+
+        evidences[idx_pos - 1], evidences[idx_pos] = evidences[idx_pos], evidences[idx_pos - 1]
+        for new_idx, ev in enumerate(evidences, 1):
+            ev["index"] = new_idx
+
+        ticket["evidences"] = evidences
+        self._save_ticket_json(ticket)
+        if self._active_ticket and self._active_ticket.get("id") == ticket.get("id"):
+            self._active_ticket["evidences"] = evidences
+        return True
+
+    def move_evidence_down(self, ticket_id: Optional[str], evidence_index: int) -> bool:
+        """Move a evidência para baixo na ordem do relatório e re-indexa a lista."""
+        ticket = self._resolve_ticket(ticket_id)
+        if not ticket:
+            return False
+        evidences = ticket.get("evidences", [])
+        idx_pos = -1
+        for i, ev in enumerate(evidences):
+            if ev.get("index") == evidence_index:
+                idx_pos = i
+                break
+        if idx_pos == -1 or idx_pos >= len(evidences) - 1:
+            return False  # Já está no final ou não encontrado
+
+        evidences[idx_pos], evidences[idx_pos + 1] = evidences[idx_pos + 1], evidences[idx_pos]
+        for new_idx, ev in enumerate(evidences, 1):
+            ev["index"] = new_idx
+
+        ticket["evidences"] = evidences
+        self._save_ticket_json(ticket)
+        if self._active_ticket and self._active_ticket.get("id") == ticket.get("id"):
+            self._active_ticket["evidences"] = evidences
+        return True
+
+    def replace_evidence(
+        self,
+        ticket_id: Optional[str],
+        evidence_index: int,
+        new_image: Image.Image,
+        description: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Substitui a imagem de uma evidência existente mantendo a posição e atualizando os dados."""
+        ticket = self._resolve_ticket(ticket_id)
+        if not ticket:
+            return None
+        evidences = ticket.get("evidences", [])
+        target_ev = None
+        for ev in evidences:
+            if ev.get("index") == evidence_index:
+                target_ev = ev
+                break
+        if not target_ev:
+            return None
+
+        folder = Path(ticket.get("folder_path", ""))
+        evidencias_folder = folder / "evidencias"
+        evidencias_folder.mkdir(parents=True, exist_ok=True)
+
+        old_rel = target_ev.get("relative_path", "")
+        if old_rel:
+            old_path = folder / old_rel
+            if old_path.exists():
+                try:
+                    old_path.unlink()
+                except Exception as e:
+                    print(f"[TicketManager] Falha ao deletar imagem antiga {old_path}: {e}")
+
+        now = datetime.datetime.now()
+        timestamp_slug = now.strftime("%Y%m%d_%H%M%S")
+        filename = f"{evidence_index:03d}_{timestamp_slug}_substituida.png"
+        filepath = evidencias_folder / filename
+        new_image.save(str(filepath), "PNG", optimize=True)
+
+        target_ev["filename"] = filename
+        target_ev["relative_path"] = f"evidencias/{filename}"
+        target_ev["timestamp"] = now.isoformat()
+        target_ev["timestamp_display"] = now.strftime("%d/%m/%Y %H:%M:%S")
+        target_ev["width"] = new_image.width
+        target_ev["height"] = new_image.height
+        if description is not None:
+            target_ev["description"] = description.strip()
+
+        ticket["evidences"] = evidences
+        self._save_ticket_json(ticket)
+        if self._active_ticket and self._active_ticket.get("id") == ticket.get("id"):
+            self._active_ticket["evidences"] = evidences
+        return target_ev
+
+    def add_evidence_from_image(
+        self,
+        ticket_id: Optional[str],
+        image: Image.Image,
+        description: str = "",
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Adiciona uma nova evidência a partir de uma imagem PIL no chamado informado ou ativo."""
+        ticket = self._resolve_ticket(ticket_id)
+        if not ticket:
+            return None
+        folder = Path(ticket.get("folder_path", ""))
+        evidencias_folder = folder / "evidencias"
+        evidencias_folder.mkdir(parents=True, exist_ok=True)
+
+        evidences = ticket.get("evidences", [])
+        next_idx = len(evidences) + 1
+
+        now = datetime.datetime.now()
+        timestamp_slug = now.strftime("%Y%m%d_%H%M%S")
+        proc_slug = sanitize_filename(metadata.get("process_name", "manual") if metadata else "manual").replace(".exe", "")
+        filename = f"{next_idx:03d}_{timestamp_slug}_{proc_slug}.png"
+        filepath = evidencias_folder / filename
+
+        image.save(str(filepath), "PNG", optimize=True)
+
+        meta = metadata or {}
+        evidence_record = {
+            "index": next_idx,
+            "filename": filename,
+            "relative_path": f"evidencias/{filename}",
+            "description": description.strip(),
+            "timestamp": meta.get("timestamp", now.isoformat()),
+            "timestamp_display": meta.get("timestamp_display", now.strftime("%d/%m/%Y %H:%M:%S")),
+            "window_title": meta.get("window_title", "Adicionada manualmente"),
+            "process_name": meta.get("process_name", "DeskEvidence"),
+            "mode": meta.get("mode", "manual_import"),
+            "width": meta.get("width", image.width),
+            "height": meta.get("height", image.height),
+        }
+
+        evidences.append(evidence_record)
+        ticket["evidences"] = evidences
+        self._save_ticket_json(ticket)
+        if self._active_ticket and self._active_ticket.get("id") == ticket.get("id"):
+            self._active_ticket["evidences"] = evidences
+        return evidence_record
+
+    def update_ticket_conclusion(self, ticket_id: Optional[str], conclusion: str) -> bool:
         """Atualiza a conclusão textual do chamado e salva no JSON."""
-        ticket = self.get_ticket_by_id(ticket_id)
+        ticket = self._resolve_ticket(ticket_id)
         if not ticket:
             return False
         ticket["conclusion"] = conclusion.strip()
         self._save_ticket_json(ticket)
-        if self._active_ticket and self._active_ticket.get("id") == ticket_id:
+        if self._active_ticket and self._active_ticket.get("id") == ticket.get("id"):
             self._active_ticket["conclusion"] = conclusion.strip()
         return True
 
