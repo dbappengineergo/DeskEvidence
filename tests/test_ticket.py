@@ -148,5 +148,121 @@ class TestTicketManager(unittest.TestCase):
         doc_content = doc_path.read_text(encoding="utf-8")
         self.assertIn("Chamado resolvido com sucesso", doc_content)
 
+    def test_update_ticket_description(self):
+        ticket = self.tm.create_ticket("REQ-DESC", "Chamado Descrição", "Descrição Original")
+        ticket_id = ticket["id"]
+        
+        ok = self.tm.update_ticket_description(ticket_id, "Nova Descrição Atualizada")
+        self.assertTrue(ok)
+        active = self.tm.get_active_ticket()
+        self.assertEqual(active["description"], "Nova Descrição Atualizada")
+
+        # Testar via update_ticket_details
+        self.tm.update_ticket_details(ticket_id, description="Descrição Final", name="Chamado Renomeado")
+        active = self.tm.get_active_ticket()
+        self.assertEqual(active["description"], "Descrição Final")
+        self.assertEqual(active["name"], "Chamado Renomeado")
+
+    def test_update_evidence_description(self):
+        ticket = self.tm.create_ticket("REQ-EVDESC", "Chamado Evidências")
+        img = Image.new("RGB", (60, 60), color="red")
+        ev1 = self.tm.save_evidence(img, {"window_title": "App 1", "process_name": "app1.exe"}, "Desc 1")
+        ev2 = self.tm.save_evidence(img, {"window_title": "App 2", "process_name": "app2.exe"}, "Desc 2")
+
+        ok = self.tm.update_evidence_description(ticket["id"], 2, "Descrição 2 Modificada")
+        self.assertTrue(ok)
+        active = self.tm.get_active_ticket()
+        self.assertEqual(active["evidences"][1]["description"], "Descrição 2 Modificada")
+        self.assertEqual(active["evidences"][0]["description"], "Desc 1")
+
+    def test_delete_evidence_and_reindex(self):
+        ticket = self.tm.create_ticket("REQ-DEL", "Chamado Deleção")
+        folder = Path(ticket["folder_path"])
+        img = Image.new("RGB", (40, 40), color="yellow")
+        ev1 = self.tm.save_evidence(img, {"window_title": "W1"}, "Primeira")
+        ev2 = self.tm.save_evidence(img, {"window_title": "W2"}, "Segunda")
+        ev3 = self.tm.save_evidence(img, {"window_title": "W3"}, "Terceira")
+
+        f2 = folder / ev2["relative_path"]
+        self.assertTrue(f2.exists())
+
+        # Apaga a evidência #2
+        ok = self.tm.delete_evidence(ticket["id"], 2, remove_file=True)
+        self.assertTrue(ok)
+        self.assertFalse(f2.exists(), "O arquivo físico da evidência apagada deve ser excluído")
+
+        active = self.tm.get_active_ticket()
+        self.assertEqual(len(active["evidences"]), 2)
+        # Verifica se foram re-indexadas de 1 a N
+        self.assertEqual(active["evidences"][0]["index"], 1)
+        self.assertEqual(active["evidences"][0]["description"], "Primeira")
+        self.assertEqual(active["evidences"][1]["index"], 2)
+        self.assertEqual(active["evidences"][1]["description"], "Terceira")
+
+    def test_reorder_evidence_up_and_down(self):
+        ticket = self.tm.create_ticket("REQ-ORDER", "Chamado Reordenação")
+        img = Image.new("RGB", (40, 40), color="magenta")
+        self.tm.save_evidence(img, {"process_name": "p1.exe"}, "Item A")
+        self.tm.save_evidence(img, {"process_name": "p2.exe"}, "Item B")
+        self.tm.save_evidence(img, {"process_name": "p3.exe"}, "Item C")
+
+        # 1. Mover item 1 para cima (não deve alterar nada, já é o primeiro)
+        self.assertFalse(self.tm.move_evidence_up(ticket["id"], 1))
+
+        # 2. Mover item 3 para cima -> deve trocar com item 2
+        ok = self.tm.move_evidence_up(ticket["id"], 3)
+        self.assertTrue(ok)
+        active = self.tm.get_active_ticket()
+        self.assertEqual([e["description"] for e in active["evidences"]], ["Item A", "Item C", "Item B"])
+        self.assertEqual([e["index"] for e in active["evidences"]], [1, 2, 3])
+
+        # 3. Mover item 1 para baixo -> deve trocar com item 2 (que agora é Item C)
+        ok = self.tm.move_evidence_down(ticket["id"], 1)
+        self.assertTrue(ok)
+        active = self.tm.get_active_ticket()
+        self.assertEqual([e["description"] for e in active["evidences"]], ["Item C", "Item A", "Item B"])
+        self.assertEqual([e["index"] for e in active["evidences"]], [1, 2, 3])
+
+        # 4. Mover último para baixo (não deve alterar)
+        self.assertFalse(self.tm.move_evidence_down(ticket["id"], 3))
+
+    def test_replace_evidence(self):
+        ticket = self.tm.create_ticket("REQ-REPL", "Chamado Substituição")
+        folder = Path(ticket["folder_path"])
+        old_img = Image.new("RGB", (50, 50), color="black")
+        ev = self.tm.save_evidence(old_img, {"process_name": "calc.exe"}, "Calculadora aberta")
+        old_file = folder / ev["relative_path"]
+        self.assertTrue(old_file.exists())
+
+        # Substitui a evidência #1 por uma nova imagem verde (80x80)
+        new_img = Image.new("RGB", (80, 80), color="green")
+        replaced_ev = self.tm.replace_evidence(ticket["id"], 1, new_img)
+        self.assertIsNotNone(replaced_ev)
+        self.assertFalse(old_file.exists(), "Arquivo antigo deve ter sido removido")
+
+        new_file = folder / replaced_ev["relative_path"]
+        self.assertTrue(new_file.exists(), "Novo arquivo deve existir")
+        self.assertEqual(replaced_ev["width"], 80)
+        self.assertEqual(replaced_ev["height"], 80)
+        self.assertEqual(replaced_ev["description"], "Calculadora aberta", "Descrição original deve ser mantida")
+
+        active = self.tm.get_active_ticket()
+        self.assertEqual(len(active["evidences"]), 1)
+        self.assertEqual(active["evidences"][0]["width"], 80)
+
+    def test_add_evidence_from_image(self):
+        ticket = self.tm.create_ticket("REQ-ADD", "Chamado Adição Manual")
+        img = Image.new("RGB", (70, 70), color="cyan")
+        ev = self.tm.add_evidence_from_image(ticket["id"], img, description="Imagem adicionada")
+        self.assertIsNotNone(ev)
+        self.assertEqual(ev["index"], 1)
+        self.assertEqual(ev["description"], "Imagem adicionada")
+        self.assertEqual(ev["process_name"], "DeskEvidence")
+
+        folder = Path(ticket["folder_path"])
+        ev_file = folder / ev["relative_path"]
+        self.assertTrue(ev_file.exists())
+
 if __name__ == "__main__":
     unittest.main()
+

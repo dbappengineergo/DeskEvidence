@@ -225,10 +225,23 @@ def generate_html_report(ticket_data: Dict[str, Any], output_path: Path, embed_i
             description = "<em style='color: #888;'>Nenhuma descrição adicional informada.</em>"
 
         item_html = f"""
-        <div class="evidence-card">
+        <div class="evidence-card" data-index="{idx}">
+            <div class="card-header">
+                <div class="card-header-left">
+                    <span class="badge-index">Evidência #{idx:02d}</span>
+                    <span class="evidence-time">{ev.get('timestamp_display', '')}</span>
+                    {f'<span class="badge-process">{html.escape(ev.get("process_name", ""))}</span>' if ev.get("process_name") else ''}
+                </div>
+                <div class="card-controls no-print">
+                    <button type="button" class="btn-card-ctrl btn-up" title="Mover para cima (diagramação)" onclick="moveCardUp(this)">⬆️ Subir</button>
+                    <button type="button" class="btn-card-ctrl btn-down" title="Mover para baixo (diagramação)" onclick="moveCardDown(this)">⬇️ Descer</button>
+                    <button type="button" class="btn-card-ctrl btn-replace" title="Substituir foto por outra do computador" onclick="replaceCardImage(this)">🔄 Trocar Foto</button>
+                    <button type="button" class="btn-card-ctrl btn-delete" title="Remover evidência do relatório" onclick="deleteCard(this)">🗑️ Remover</button>
+                </div>
+            </div>
             <div class="card-notes">
                 <strong>Descrição da Ação:</strong>
-                <p>{description}</p>
+                <p contenteditable="true" title="Clique para editar este texto antes de imprimir ou salvar em PDF">{description}</p>
             </div>
             <div class="card-image-wrap">
                 <a href="{img_src}" target="_blank" title="Clique para abrir imagem em tamanho real">
@@ -239,9 +252,15 @@ def generate_html_report(ticket_data: Dict[str, Any], output_path: Path, embed_i
         """
         evidence_items_html.append(item_html)
 
-    cards_rendered = "\n".join(evidence_items_html) if evidence_items_html else """
-        <div class="no-evidence">
-            <p>Nenhuma evidência capturada para este chamado.</p>
+    cards_rendered = f"""
+        <div id="cards-container">
+            {''.join(evidence_items_html)}
+        </div>
+    """ if evidence_items_html else """
+        <div id="cards-container">
+            <div class="no-evidence">
+                <p>Nenhuma evidência capturada para este chamado.</p>
+            </div>
         </div>
     """
 
@@ -275,9 +294,9 @@ def generate_html_report(ticket_data: Dict[str, Any], output_path: Path, embed_i
     conclusion_text = ticket_data.get("conclusion", "").strip()
     if conclusion_text:
         escaped_conclusion = html.escape(conclusion_text).replace("\n", "<br>")
-        conclusion_body = f'<div class="conclusion-body">{escaped_conclusion}</div>'
+        conclusion_body = f'<div class="conclusion-body" contenteditable="true" title="Clique para editar este texto antes de imprimir ou salvar em PDF">{escaped_conclusion}</div>'
     else:
-        conclusion_body = '<div class="conclusion-body empty">Nenhuma conclusão ou parecer técnico informado.</div>'
+        conclusion_body = '<div class="conclusion-body empty" contenteditable="true" title="Clique para editar este texto antes de imprimir ou salvar em PDF">Nenhuma conclusão ou parecer técnico informado.</div>'
 
     conclusion_html = f"""
         <div class="conclusion-card">
@@ -299,7 +318,7 @@ def generate_html_report(ticket_data: Dict[str, Any], output_path: Path, embed_i
                 <span class="status-badge {status_badge_class}">{status_label}</span>
             </div>
             <h1 class="ticket-title">{ticket_name}</h1>
-            <p class="ticket-desc">{ticket_data.get('description', 'Sem descrição.')}</p>
+            <p class="ticket-desc" contenteditable="true" title="Clique para editar este texto antes de imprimir ou salvar em PDF">{ticket_data.get('description', 'Sem descrição.')}</p>
             
             <div class="meta-grid">
                 <div class="meta-item">
@@ -312,7 +331,7 @@ def generate_html_report(ticket_data: Dict[str, Any], output_path: Path, embed_i
                 </div>
                 <div class="meta-item">
                     <strong>Total de Evidências:</strong>
-                    <span>{len(evidences)} captura(s)</span>
+                    <span id="meta-ev-count">{len(evidences)} captura(s)</span>
                 </div>
             </div>
         </header>
@@ -616,6 +635,96 @@ def generate_html_report(ticket_data: Dict[str, Any], output_path: Path, embed_i
             margin-top: 40px;
         }}
 
+        [contenteditable="true"] {{
+            outline: 1px dashed transparent;
+            padding: 2px 4px;
+            border-radius: 4px;
+            transition: all 0.15s ease-in-out;
+        }}
+        [contenteditable="true"]:hover {{
+            outline: 1px dashed #3b82f6;
+            background-color: rgba(59, 130, 246, 0.08);
+            cursor: text;
+        }}
+        [contenteditable="true"]:focus {{
+            outline: 2px solid #2563eb;
+            background-color: #ffffff;
+            color: #0f172a;
+        }}
+
+        /* ESTILOS DO MODO DE REVISÃO FINAL */
+        .revision-badge {{
+            background-color: #2563eb;
+            color: #ffffff;
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-right: 8px;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }}
+        .revision-hint {{
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }}
+        .card-header-left {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }}
+        .card-controls {{
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }}
+        .btn-card-ctrl {{
+            background-color: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            color: #334155;
+            font-size: 0.78rem;
+            font-weight: 600;
+            padding: 4px 9px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }}
+        .btn-card-ctrl:hover {{
+            background-color: #e2e8f0;
+            color: #0f172a;
+            border-color: #94a3b8;
+        }}
+        .btn-card-ctrl:disabled {{
+            opacity: 0.35;
+            cursor: not-allowed;
+            background-color: #f8fafc;
+            border-color: #e2e8f0;
+            color: #94a3b8;
+        }}
+        .btn-replace:hover {{
+            background-color: #dbeafe;
+            color: #1d4ed8;
+            border-color: #93c5fd;
+        }}
+        .btn-delete:hover {{
+            background-color: #fee2e2;
+            color: #b91c1c;
+            border-color: #fca5a5;
+        }}
+        .btn-save {{
+            background-color: #16a34a;
+            color: #ffffff;
+        }}
+        .btn-save:hover {{
+            background-color: #15803d;
+        }}
+
         /* ESTILOS DE IMPRESSÃO / SALVAR EM PDF */
         @media print {{
             @page {{
@@ -629,8 +738,12 @@ def generate_html_report(ticket_data: Dict[str, Any], output_path: Path, embed_i
                 -webkit-print-color-adjust: exact !important;
                 print-color-adjust: exact !important;
             }}
-            .no-print {{
+            .no-print, .card-controls {{
                 display: none !important;
+            }}
+            [contenteditable="true"] {{
+                outline: none !important;
+                background: transparent !important;
             }}
             .header {{
                 background: #16223f !important;
@@ -669,15 +782,20 @@ def generate_html_report(ticket_data: Dict[str, Any], output_path: Path, embed_i
 </head>
 <body>
     <div class="container">
-        <!-- BARRA DE AÇÕES (PDF / WORD) -->
+        <!-- BARRA DE AÇÕES (REVISÃO FINAL / PDF / WORD) -->
         <div class="action-bar no-print">
             <div class="action-bar-info">
-                <span>Opções de Exportação do Relatório:</span>
+                <span class="revision-badge">✏️ MODO REVISÃO FINAL</span>
+                <span class="revision-hint">Edite textos diretamente, use ⬆️/⬇️ para diagramação, troque fotos ou remova itens antes de salvar.</span>
             </div>
             <div class="action-buttons">
                 <button id="btn-pdf" class="btn btn-pdf" onclick="window.print()" title="Salvar relatório como PDF ou Imprimir">
                     <svg viewBox="0 0 24 24"><path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z"/></svg>
                     Salvar em PDF / Imprimir
+                </button>
+                <button id="btn-save-html" class="btn btn-save" onclick="saveRevisedHtml()" title="Baixar cópia revisada deste relatório HTML">
+                    <svg viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
+                    Salvar HTML Revisado
                 </button>
                 <button id="btn-word" class="btn btn-word" onclick="exportToWord()" title="Exportar e baixar como documento do Word (.doc)">
                     <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
@@ -690,6 +808,125 @@ def generate_html_report(ticket_data: Dict[str, Any], output_path: Path, embed_i
             {body_content_html}
         </div>
     </div>
+
+    <script>
+        function getCardsContainer() {{
+            return document.getElementById('cards-container');
+        }}
+
+        function updateCardsState() {{
+            const container = getCardsContainer();
+            if (!container) return;
+            const cards = Array.from(container.querySelectorAll('.evidence-card'));
+            
+            const metaCount = document.getElementById('meta-ev-count');
+            if (metaCount) {{
+                metaCount.textContent = cards.length + ' captura(s)';
+            }}
+
+            cards.forEach((card, index) => {{
+                const badge = card.querySelector('.badge-index');
+                if (badge) {{
+                    badge.textContent = 'Evidência #' + String(index + 1).padStart(2, '0');
+                }}
+                const btnUp = card.querySelector('.btn-up');
+                const btnDown = card.querySelector('.btn-down');
+                if (btnUp) btnUp.disabled = (index === 0);
+                if (btnDown) btnDown.disabled = (index === cards.length - 1);
+            }});
+        }}
+
+        function moveCardUp(btn) {{
+            const card = btn.closest('.evidence-card');
+            if (!card) return;
+            const prev = card.previousElementSibling;
+            if (prev && prev.classList.contains('evidence-card')) {{
+                card.parentNode.insertBefore(card, prev);
+                updateCardsState();
+            }}
+        }}
+
+        function moveCardDown(btn) {{
+            const card = btn.closest('.evidence-card');
+            if (!card) return;
+            const next = card.nextElementSibling;
+            if (next && next.classList.contains('evidence-card')) {{
+                card.parentNode.insertBefore(next, card);
+                updateCardsState();
+            }}
+        }}
+
+        function deleteCard(btn) {{
+            const card = btn.closest('.evidence-card');
+            if (!card) return;
+            if (!confirm('Deseja realmente remover esta evidência do relatório?')) return;
+            card.remove();
+            updateCardsState();
+        }}
+
+        function replaceCardImage(btn) {{
+            const card = btn.closest('.evidence-card');
+            if (!card) return;
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+            input.onchange = function(e) {{
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = function(evt) {{
+                    const dataUrl = evt.target.result;
+                    const img = card.querySelector('.card-image-wrap img');
+                    const link = card.querySelector('.card-image-wrap a');
+                    if (img) img.src = dataUrl;
+                    if (link) link.href = dataUrl;
+                }};
+                reader.readAsDataURL(file);
+            }};
+            input.click();
+        }}
+
+        function saveRevisedHtml() {{
+            const htmlDoc = '<!DOCTYPE html>\\n' + document.documentElement.outerHTML;
+            const blob = new Blob([htmlDoc], {{ type: 'text/html;charset=utf-8' }});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'relatorio_evidencias_revisado.html';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }}
+
+        function exportToWord() {{
+            const reportContent = document.getElementById('report-content');
+            if (!reportContent) return;
+            
+            const clone = reportContent.cloneNode(true);
+            clone.querySelectorAll('.no-print').forEach(el => el.remove());
+            
+            const htmlHeader = '<html xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+                'xmlns:w="urn:schemas-microsoft-com:office:word" ' +
+                'xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8">' +
+                '<style>body{{font-family:Segoe UI,Arial,sans-serif;}} img{{max-width:100%;}}</style></head><body>';
+            const htmlFooter = '</body></html>';
+            const source = htmlHeader + clone.innerHTML + htmlFooter;
+            
+            const blob = new Blob(['\\ufeff' + source], {{ type: 'application/msword;charset=utf-8' }});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'relatorio_evidencias.doc';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }}
+
+        document.addEventListener('DOMContentLoaded', updateCardsState);
+        updateCardsState();
+    </script>
 </body>
 </html>
 """
@@ -728,6 +965,10 @@ def generate_word_report(ticket_data: Dict[str, Any], output_path: Path) -> str:
 
         item_html = f"""
         <div class="evidence-card">
+            <div class="card-header">
+                <span class="badge-index">Evidência #{idx:02d}</span>
+                <span class="evidence-time">{ev.get('timestamp_display', '')}</span>
+            </div>
             <div class="card-notes">
                 <strong>Descrição da Ação:</strong>
                 <p>{description}</p>
